@@ -1,12 +1,3 @@
-/**
- * POST /api/classify-batch — Bulk CSV/Excel classification
- * 
- * Accepts multipart/form-data file upload (CSV, XLSX, XLS).
- * Classifies each row using CCC v3 two-pass algorithm.
- * Returns classified CSV as downloadable file.
- * 
- * PHI Safety: No temp files, no disk writes, in-memory processing only.
- */
 
 import { Router } from 'express';
 import busboy from 'busboy';
