@@ -10,7 +10,6 @@ dist/
 
 # IDE / Editor
 .vscode/
-.idea/
 
 # OS files
 Thumbs.db
@@ -19,9 +18,27 @@ Thumbs.db
 # Copyrighted research files (PDFs, supplement spreadsheets)
 files/
 
-# Agent / AI config (project-local only)
+# Agent / AI config (Antigravity, Gemini, etc.)
 .agent/
 .gemini/
+AGENTS.md
+agent.md
+gemini.md
+agent_rules/
+skills/
+progress.md
+optimization.md
+security.md
+
+# Development scratch scripts (peek, inspect outputs)
+scripts/excel-output.txt
+scripts/map-stats.txt
+scripts/peek_output.json
+scripts/peek_output.txt
+scripts/peek_turkish.json
+scripts/inspect-excel.js
+scripts/peek_excel.js
+scripts/peek_turkish.js
 
 # Logs
 *.log
