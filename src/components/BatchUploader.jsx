@@ -1,5 +1,78 @@
 import { useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import Papa from 'papaparse';
+import * as XLSX from 'xlsx';
+import { classify, getCategories } from '../engine/classifier.js';
+import dxMap from '../data/dx_map.json';
+import pxMap from '../data/px_map.json';
+
+const DX_COLUMN_PATTERNS = ['dx', 'diagnosis', 'dx_code', 'dx_codes', 'icd_dx', 'icd10_dx', 'tani', 'tani_kodu'];
+const PX_COLUMN_PATTERNS = ['px', 'procedure', 'px_code', 'px_codes', 'icd_px', 'icd10_px', 'islem', 'islem_kodu'];
+
+function findColumn(headers, patterns) {
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+    for (const pattern of patterns) {
+        const idx = lowerHeaders.indexOf(pattern);
+        if (idx !== -1) return headers[idx];
+    }
+    return null;
+}
+
+function classifyRows(rows, headers) {
+    const categories = getCategories();
+    const dxCol = findColumn(headers, DX_COLUMN_PATTERNS);
+    const pxCol = findColumn(headers, PX_COLUMN_PATTERNS);
+
+    if (!dxCol) {
+        return { error: 'Dosyada tanı kodu sütunu bulunamadı. Beklenen sütun adları: dx, diagnosis, dx_code, tani, tani_kodu' };
+    }
+
+    const outHeaders = [...headers, ...categories, ...categories.map(c => `${c}_tech`), 'ccc_flag', 'num_categories'];
+    const outputRows = [outHeaders];
+    let totalRows = 0;
+    let skippedRows = 0;
+
+    for (const row of rows) {
+        totalRows++;
+        try {
+            const dxRaw = String(row[dxCol] || '');
+            const dxCodes = dxRaw.split(/[;,]/).map(s => s.trim()).filter(Boolean);
+            const pxCodes = pxCol ? String(row[pxCol] || '').split(/[;,]/).map(s => s.trim()).filter(Boolean) : [];
+
+            const result = classify(dxCodes, pxCodes, dxMap, pxMap);
+
+            const outRowValues = [];
+            for (const h of headers) outRowValues.push(row[h] !== undefined ? row[h] : '');
+            for (const cat of categories) outRowValues.push(result[cat]);
+            for (const cat of categories) outRowValues.push(result[`${cat}_tech`]);
+            outRowValues.push(result.ccc_flag);
+            outRowValues.push(result.num_categories);
+
+            outputRows.push(outRowValues);
+        } catch (e) {
+            skippedRows++;
+        }
+    }
+
+    if (totalRows === 0) {
+        return { error: 'Dosyada işlenecek veri bulunamadı.' };
+    }
+
+    const csvOutput = Papa.unparse(outputRows);
+    return { csvOutput, totalRows, skippedRows, error: null };
+}
+
+function triggerCsvDownload(csvContent, filename) {
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 export default function BatchUploader() {
     const { t } = useTranslation();
@@ -57,50 +130,43 @@ export default function BatchUploader() {
         setSuccess(null);
 
         try {
-            const formData = new FormData();
-            formData.append('file', file);
+            const fileName = file.name.toLowerCase();
+            let rows, headers;
 
-            const response = await fetch('/api/classify-batch', {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (!response.ok) {
-                // Try to parse JSON error
-                const contentType = response.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    const data = await response.json();
-                    setError(data.message || t('batch.error'));
-                } else {
-                    setError(t('batch.error'));
+            if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+                const buffer = await file.arrayBuffer();
+                const workbook = XLSX.read(buffer, { type: 'array' });
+                const firstSheetName = workbook.SheetNames[0];
+                const sheet = workbook.Sheets[firstSheetName];
+                const jsonData = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+                if (jsonData.length === 0) {
+                    setError('Dosyada işlenecek veri bulunamadı.');
+                    return;
                 }
+                headers = Object.keys(jsonData[0]);
+                rows = jsonData;
+            } else {
+                const text = await file.text();
+                const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+                headers = parsed.meta.fields || [];
+                rows = parsed.data;
+            }
+
+            const result = classifyRows(rows, headers);
+
+            if (result.error) {
+                setError(result.error);
                 return;
             }
 
-            // Download the CSV file
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'ccc_v3_sonuclar.csv';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            const totalRows = response.headers.get('X-Total-Rows') || '?';
-            const skippedRows = response.headers.get('X-Skipped-Rows') || '0';
-
-            setSuccess({
-                totalRows,
-                skippedRows,
-            });
+            triggerCsvDownload(result.csvOutput, 'ccc_v3_sonuclar.csv');
+            setSuccess({ totalRows: result.totalRows, skippedRows: result.skippedRows });
         } catch (err) {
             setError(t('batch.error'));
         } finally {
             setLoading(false);
         }
-    }, [file]);
+    }, [file, t]);
 
     const handleClear = useCallback(() => {
         setFile(null);
@@ -172,7 +238,6 @@ export default function BatchUploader() {
                     onClick={handleClear}
                     disabled={loading}
                 >
-                    {/* fallback to new or clear string */}
                     {t('batch.button.new')}
                 </button>
             </div>
